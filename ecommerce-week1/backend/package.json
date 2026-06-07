@@ -1,0 +1,19 @@
+{
+  "name": "ecommerce-graphql-backend",
+  "version": "1.0.0",
+  "description": "E-Commerce GraphQL API using Apollo Server + MySQL",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.10.0",
+    "graphql": "^16.8.1",
+    "mysql2": "^3.9.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
