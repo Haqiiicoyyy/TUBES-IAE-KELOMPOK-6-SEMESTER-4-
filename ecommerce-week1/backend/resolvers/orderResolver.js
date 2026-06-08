@@ -1,99 +1,272 @@
-const db = require("../db");
+// Status order yang valid dan urutan transisinya
+const VALID_STATUSES = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
 
-const orderResolvers = {
+const ALLOWED_TRANSITIONS = {
+  PENDING:    ["PROCESSING", "CANCELLED"],
+  PROCESSING: ["SHIPPED",    "CANCELLED"],
+  SHIPPED:    ["DELIVERED"],
+  DELIVERED:  [],   
+  CANCELLED:  [],   
+};
+
+const orderResolver = {
   Query: {
-    orders: async () => {
-      const [rows] = await db.query("SELECT * FROM orders ORDER BY created_at DESC");
-      return rows;
+    // Ambil semua order (bisa difilter berdasarkan status)
+    orders: async (_, { status }, { db }) => {
+      try {
+        let query = `
+          SELECT 
+            o.*,
+            JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'id',         oi.id,
+                'product_id', oi.product_id,
+                'product_name', p.name,
+                'quantity',   oi.quantity,
+                'price',      oi.price
+              )
+            ) AS items
+          FROM orders o
+          LEFT JOIN order_items oi ON o.id = oi.order_id
+          LEFT JOIN products p ON oi.product_id = p.id
+        `;
+        const params = [];
+
+        if (status) {
+          if (!VALID_STATUSES.includes(status)) {
+            throw new Error(`Status tidak valid. Pilihan: ${VALID_STATUSES.join(", ")}`);
+          }
+          query += ` WHERE o.status = ?`;
+          params.push(status);
+        }
+
+        query += ` GROUP BY o.id ORDER BY o.created_at DESC`;
+
+        const [rows] = await db.query(query, params);
+
+        // Parse JSON items dari database
+        return rows.map((row) => ({
+          ...row,
+          items: typeof row.items === "string" ? JSON.parse(row.items) : row.items,
+        }));
+      } catch (error) {
+        throw new Error(`Gagal mengambil data order: ${error.message}`);
+      }
+    },
+
+    // Ambil satu order berdasarkan ID
+    order: async (_, { id }, { db }) => {
+      try {
+        const [rows] = await db.query(
+          `SELECT 
+            o.*,
+            JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'id',           oi.id,
+                'product_id',   oi.product_id,
+                'product_name', p.name,
+                'quantity',     oi.quantity,
+                'price',        oi.price
+              )
+            ) AS items
+          FROM orders o
+          LEFT JOIN order_items oi ON o.id = oi.order_id
+          LEFT JOIN products p ON oi.product_id = p.id
+          WHERE o.id = ?
+          GROUP BY o.id`,
+          [id]
+        );
+
+        if (rows.length === 0) {
+          throw new Error(`Order dengan ID ${id} tidak ditemukan`);
+        }
+
+        const row = rows[0];
+        return {
+          ...row,
+          items: typeof row.items === "string" ? JSON.parse(row.items) : row.items,
+        };
+      } catch (error) {
+        throw new Error(`Gagal mengambil order: ${error.message}`);
+      }
     },
   },
 
   Mutation: {
-    createOrder: async (_, { input }) => {
-      const { customerName, items } = input;
-      const conn = await db.getConnection();
+    // Buat order baru — menggunakan transaction agar stok & order konsisten
+    createOrder: async (_, { customer_name, customer_email, items }, { db }) => {
+      const connection = await db.getConnection();
 
       try {
-        await conn.beginTransaction();
-
-        let totalPrice = 0;
-        const resolvedItems = [];
-
-        for (const item of items) {
-          const [productRows] = await conn.query(
-            "SELECT * FROM products WHERE id = ?",
-            [item.productId]
-          );
-          if (!productRows.length) throw new Error(`Product ${item.productId} not found`);
-          const product = productRows[0];
-          if (product.stock < item.quantity)
-            throw new Error(`Insufficient stock for product: ${product.name}`);
-
-          const subtotal = product.price * item.quantity;
-          totalPrice += subtotal;
-          resolvedItems.push({ product, quantity: item.quantity, subtotal });
-
-          // Deduct stock
-          await conn.query(
-            "UPDATE products SET stock = stock - ? WHERE id = ?",
-            [item.quantity, item.productId]
-          );
+        // Validasi input dasar
+        if (!customer_name || customer_name.trim() === "") {
+          throw new Error("Nama pelanggan tidak boleh kosong");
+        }
+        if (!customer_email || !customer_email.includes("@")) {
+          throw new Error("Email pelanggan tidak valid");
+        }
+        if (!items || items.length === 0) {
+          throw new Error("Order harus memiliki minimal 1 item");
         }
 
-        const [orderResult] = await conn.query(
-          "INSERT INTO orders (customer_name, total_price, status) VALUES (?, ?, 'PENDING')",
-          [customerName, totalPrice]
+        // Mulai transaction
+        await connection.beginTransaction();
+
+        let total_price = 0;
+        const orderItemsToInsert = [];
+
+        // Cek stok dan hitung total untuk setiap item
+        for (const item of items) {
+          if (!item.product_id || item.quantity <= 0) {
+            throw new Error("Setiap item harus memiliki product_id dan quantity yang valid");
+          }
+
+          // Kunci baris produk agar tidak ada race condition (stok tidak menjadi minus)
+          const [products] = await connection.query(
+            `SELECT id, name, price, stock FROM products WHERE id = ? FOR UPDATE`,
+            [item.product_id]
+          );
+
+          if (products.length === 0) {
+            throw new Error(`Produk dengan ID ${item.product_id} tidak ditemukan`);
+          }
+
+          const product = products[0];
+
+          if (product.stock < item.quantity) {
+            throw new Error(
+              `Stok produk "${product.name}" tidak cukup. Stok tersedia: ${product.stock}, diminta: ${item.quantity}`
+            );
+          }
+
+          // Kurangi stok
+          await connection.query(
+            `UPDATE products SET stock = stock - ? WHERE id = ?`,
+            [item.quantity, item.product_id]
+          );
+
+          total_price += product.price * item.quantity;
+          orderItemsToInsert.push({
+            product_id: item.product_id,
+            quantity:   item.quantity,
+            price:      product.price,
+          });
+        }
+
+        // Simpan order ke tabel orders
+        const [orderResult] = await connection.query(
+          `INSERT INTO orders (customer_name, customer_email, total_price, status) VALUES (?, ?, ?, 'PENDING')`,
+          [customer_name.trim(), customer_email.trim(), total_price]
         );
         const orderId = orderResult.insertId;
 
-        for (const item of resolvedItems) {
-          await conn.query(
-            "INSERT INTO order_items (order_id, product_id, quantity, subtotal) VALUES (?, ?, ?, ?)",
-            [orderId, item.product.id, item.quantity, item.subtotal]
+        // Simpan setiap item ke tabel order_items
+        for (const oi of orderItemsToInsert) {
+          await connection.query(
+            `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)`,
+            [orderId, oi.product_id, oi.quantity, oi.price]
           );
         }
 
-        await conn.commit();
+        // Semua berhasil → commit
+        await connection.commit();
 
-        const [orderRows] = await conn.query("SELECT * FROM orders WHERE id = ?", [orderId]);
-        return orderRows[0];
-      } catch (err) {
-        await conn.rollback();
-        throw err;
+        // Kembalikan order yang baru dibuat lengkap dengan items
+        const [newOrder] = await connection.query(
+          `SELECT 
+            o.*,
+            JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'id',           oi.id,
+                'product_id',   oi.product_id,
+                'product_name', p.name,
+                'quantity',     oi.quantity,
+                'price',        oi.price
+              )
+            ) AS items
+          FROM orders o
+          LEFT JOIN order_items oi ON o.id = oi.order_id
+          LEFT JOIN products p ON oi.product_id = p.id
+          WHERE o.id = ?
+          GROUP BY o.id`,
+          [orderId]
+        );
+
+        const row = newOrder[0];
+        return {
+          ...row,
+          items: typeof row.items === "string" ? JSON.parse(row.items) : row.items,
+        };
+      } catch (error) {
+        // Ada error → rollback semua perubahan
+        await connection.rollback();
+        throw new Error(`Gagal membuat order: ${error.message}`);
       } finally {
-        conn.release();
+        // Selalu lepas connection kembali ke pool
+        connection.release();
       }
     },
 
-    updateOrderStatus: async (_, { id, status }) => {
-      const validStatuses = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
-      if (!validStatuses.includes(status))
-        throw new Error(`Invalid status. Must be one of: ${validStatuses.join(", ")}`);
+    // Update status order
+    updateOrderStatus: async (_, { id, status }, { db }) => {
+      try {
+        if (!VALID_STATUSES.includes(status)) {
+          throw new Error(`Status tidak valid. Pilihan: ${VALID_STATUSES.join(", ")}`);
+        }
 
-      await db.query("UPDATE orders SET status = ? WHERE id = ?", [status, id]);
-      const [rows] = await db.query("SELECT * FROM orders WHERE id = ?", [id]);
-      if (!rows.length) throw new Error(`Order with id ${id} not found`);
-      return rows[0];
-    },
-  },
+        const [existing] = await db.query(`SELECT id, status FROM orders WHERE id = ?`, [id]);
+        if (existing.length === 0) {
+          throw new Error(`Order dengan ID ${id} tidak ditemukan`);
+        }
 
-  Order: {
-    items: async (order) => {
-      const [rows] = await db.query(
-        "SELECT * FROM order_items WHERE order_id = ?",
-        [order.id]
-      );
-      return rows;
-    },
-    createdAt: (order) => order.created_at?.toISOString?.() || order.created_at,
-  },
+        const currentStatus = existing[0].status;
 
-  OrderItem: {
-    product: async (item) => {
-      const [rows] = await db.query("SELECT * FROM products WHERE id = ?", [item.product_id]);
-      return rows[0] || null;
+        // Cek apakah transisi status diperbolehkan
+        const allowedNext = ALLOWED_TRANSITIONS[currentStatus];
+        if (!allowedNext.includes(status)) {
+          if (allowedNext.length === 0) {
+            throw new Error(
+              `Order dengan status "${currentStatus}" sudah final dan tidak bisa diubah`
+            );
+          }
+          throw new Error(
+            `Tidak bisa mengubah status dari "${currentStatus}" ke "${status}". Status yang diperbolehkan: ${allowedNext.join(", ")}`
+          );
+        }
+
+        await db.query(`UPDATE orders SET status = ? WHERE id = ?`, [status, id]);
+
+        // Kembalikan order yang sudah diupdate
+        const [updated] = await db.query(
+          `SELECT 
+            o.*,
+            JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'id',           oi.id,
+                'product_id',   oi.product_id,
+                'product_name', p.name,
+                'quantity',     oi.quantity,
+                'price',        oi.price
+              )
+            ) AS items
+          FROM orders o
+          LEFT JOIN order_items oi ON o.id = oi.order_id
+          LEFT JOIN products p ON oi.product_id = p.id
+          WHERE o.id = ?
+          GROUP BY o.id`,
+          [id]
+        );
+
+        const row = updated[0];
+        return {
+          ...row,
+          items: typeof row.items === "string" ? JSON.parse(row.items) : row.items,
+        };
+      } catch (error) {
+        throw new Error(`Gagal mengupdate status order: ${error.message}`);
+      }
     },
   },
 };
 
-module.exports = orderResolvers;
+module.exports = orderResolver;
