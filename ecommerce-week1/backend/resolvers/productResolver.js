@@ -1,44 +1,20 @@
+const db = require("../db");
+
 const productResolver = {
   Query: {
-    // Ambil semua produk (bisa difilter berdasarkan category_id)
-    products: async (_, { category_id }, { db }) => {
+    products: async () => {
       try {
-        let query = `
-          SELECT p.*, c.name AS category_name
-          FROM products p
-          LEFT JOIN categories c ON p.category_id = c.id
-        `;
-        const params = [];
-
-        if (category_id) {
-          query += ` WHERE p.category_id = ?`;
-          params.push(category_id);
-        }
-
-        query += ` ORDER BY p.created_at DESC`;
-
-        const [rows] = await db.query(query, params);
+        const [rows] = await db.query("SELECT * FROM products");
         return rows;
       } catch (error) {
         throw new Error(`Gagal mengambil data produk: ${error.message}`);
       }
     },
 
-    // Ambil satu produk berdasarkan ID
-    product: async (_, { id }, { db }) => {
+    product: async (_, { id }) => {
       try {
-        const [rows] = await db.query(
-          `SELECT p.*, c.name AS category_name
-           FROM products p
-           LEFT JOIN categories c ON p.category_id = c.id
-           WHERE p.id = ?`,
-          [id]
-        );
-
-        if (rows.length === 0) {
-          throw new Error(`Produk dengan ID ${id} tidak ditemukan`);
-        }
-
+        const [rows] = await db.query("SELECT * FROM products WHERE id = ?", [id]);
+        if (!rows.length) throw new Error(`Produk dengan id ${id} tidak ditemukan`);
         return rows[0];
       } catch (error) {
         throw new Error(`Gagal mengambil produk: ${error.message}`);
@@ -47,109 +23,87 @@ const productResolver = {
   },
 
   Mutation: {
-    // Tambah produk baru
-    createProduct: async (_, { name, price, stock, category_id, description }, { db }) => {
+    createProduct: async (_, { input }) => {
       try {
-        // Validasi input
+        const { name, description, price, stock, categoryId } = input;
+
         if (!name || name.trim() === "") {
           throw new Error("Nama produk tidak boleh kosong");
         }
-        if (price === undefined || price < 0) {
-          throw new Error("Harga produk tidak boleh negatif");
-        }
-        if (stock === undefined || stock < 0) {
-          throw new Error("Stok produk tidak boleh negatif");
-        }
+        if (price < 0) throw new Error("Harga produk tidak boleh negatif");
+        if (stock < 0) throw new Error("Stok produk tidak boleh negatif");
 
-        // Cek apakah category_id valid (jika diberikan)
-        if (category_id) {
-          const [cat] = await db.query(`SELECT id FROM categories WHERE id = ?`, [category_id]);
-          if (cat.length === 0) {
-            throw new Error(`Kategori dengan ID ${category_id} tidak ditemukan`);
-          }
+        if (categoryId) {
+          const [cat] = await db.query("SELECT id FROM categories WHERE id = ?", [categoryId]);
+          if (!cat.length) throw new Error(`Kategori dengan ID ${categoryId} tidak ditemukan`);
         }
 
         const [result] = await db.query(
-          `INSERT INTO products (name, price, stock, category_id, description) VALUES (?, ?, ?, ?, ?)`,
-          [name.trim(), price, stock, category_id || null, description || null]
+          "INSERT INTO products (name, description, price, stock, category_id) VALUES (?, ?, ?, ?, ?)",
+          [name.trim(), description || null, price, stock, categoryId || null]
         );
 
-        // Kembalikan produk yang baru dibuat
-        const [newProduct] = await db.query(
-          `SELECT p.*, c.name AS category_name
-           FROM products p
-           LEFT JOIN categories c ON p.category_id = c.id
-           WHERE p.id = ?`,
-          [result.insertId]
-        );
-
-        return newProduct[0];
+        const [rows] = await db.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
+        return rows[0];
       } catch (error) {
         throw new Error(`Gagal membuat produk: ${error.message}`);
       }
     },
 
-    // Update data produk
-    updateProduct: async (_, { id, name, price, stock, category_id, description }, { db }) => {
+    updateProduct: async (_, { id, input }) => {
       try {
-        // Cek apakah produk ada
-        const [existing] = await db.query(`SELECT id FROM products WHERE id = ?`, [id]);
-        if (existing.length === 0) {
-          throw new Error(`Produk dengan ID ${id} tidak ditemukan`);
-        }
+        const [existing] = await db.query("SELECT id FROM products WHERE id = ?", [id]);
+        if (!existing.length) throw new Error(`Produk dengan id ${id} tidak ditemukan`);
 
-        // Validasi nilai jika diberikan
-        if (price !== undefined && price < 0) {
+        if (input.price !== undefined && input.price < 0) {
           throw new Error("Harga produk tidak boleh negatif");
         }
-        if (stock !== undefined && stock < 0) {
+        if (input.stock !== undefined && input.stock < 0) {
           throw new Error("Stok produk tidak boleh negatif");
         }
 
-        // Bangun query update secara dinamis (hanya field yang dikirim)
         const fields = [];
         const values = [];
 
-        if (name !== undefined) { fields.push("name = ?"); values.push(name.trim()); }
-        if (price !== undefined) { fields.push("price = ?"); values.push(price); }
-        if (stock !== undefined) { fields.push("stock = ?"); values.push(stock); }
-        if (category_id !== undefined) { fields.push("category_id = ?"); values.push(category_id); }
-        if (description !== undefined) { fields.push("description = ?"); values.push(description); }
+        if (input.name !== undefined)        { fields.push("name = ?");        values.push(input.name.trim()); }
+        if (input.description !== undefined) { fields.push("description = ?"); values.push(input.description); }
+        if (input.price !== undefined)       { fields.push("price = ?");       values.push(input.price); }
+        if (input.stock !== undefined)       { fields.push("stock = ?");       values.push(input.stock); }
+        if (input.categoryId !== undefined)  { fields.push("category_id = ?"); values.push(input.categoryId); }
 
-        if (fields.length === 0) {
-          throw new Error("Tidak ada field yang diperbarui");
-        }
+        if (!fields.length) throw new Error("Tidak ada field yang diperbarui");
 
         values.push(id);
         await db.query(`UPDATE products SET ${fields.join(", ")} WHERE id = ?`, values);
 
-        // Kembalikan produk yang sudah diupdate
-        const [updated] = await db.query(
-          `SELECT p.*, c.name AS category_name
-           FROM products p
-           LEFT JOIN categories c ON p.category_id = c.id
-           WHERE p.id = ?`,
-          [id]
-        );
-
-        return updated[0];
+        const [rows] = await db.query("SELECT * FROM products WHERE id = ?", [id]);
+        return rows[0];
       } catch (error) {
         throw new Error(`Gagal mengupdate produk: ${error.message}`);
       }
     },
 
-    // Hapus produk
-    deleteProduct: async (_, { id }, { db }) => {
+    deleteProduct: async (_, { id }) => {
       try {
-        const [existing] = await db.query(`SELECT id FROM products WHERE id = ?`, [id]);
-        if (existing.length === 0) {
-          throw new Error(`Produk dengan ID ${id} tidak ditemukan`);
-        }
+        const [existing] = await db.query("SELECT id FROM products WHERE id = ?", [id]);
+        if (!existing.length) throw new Error(`Produk dengan id ${id} tidak ditemukan`);
 
-        await db.query(`DELETE FROM products WHERE id = ?`, [id]);
-        return true;
+        const [result] = await db.query("DELETE FROM products WHERE id = ?", [id]);
+        return result.affectedRows > 0;
       } catch (error) {
         throw new Error(`Gagal menghapus produk: ${error.message}`);
+      }
+    },
+  },
+
+  Product: {
+    category: async (product) => {
+      try {
+        if (!product.category_id) return null;
+        const [rows] = await db.query("SELECT * FROM categories WHERE id = ?", [product.category_id]);
+        return rows[0] || null;
+      } catch (error) {
+        throw new Error(`Gagal mengambil kategori produk: ${error.message}`);
       }
     },
   },
