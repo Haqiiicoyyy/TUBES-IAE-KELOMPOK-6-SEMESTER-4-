@@ -110,6 +110,11 @@ const orderResolver = {
   },
 
   Order: {
+    // Mapping snake_case kolom DB → camelCase field GraphQL
+    customerName: (order) => order.customer_name,
+    totalPrice:   (order) => order.total_price,
+    createdAt:    (order) => order.created_at?.toISOString?.() || order.created_at,
+
     items: async (order) => {
       try {
         const [rows] = await db.query(
@@ -121,7 +126,6 @@ const orderResolver = {
         throw new Error(`Gagal mengambil items order: ${error.message}`);
       }
     },
-    createdAt: (order) => order.created_at?.toISOString?.() || order.created_at,
   },
 
   OrderItem: {
