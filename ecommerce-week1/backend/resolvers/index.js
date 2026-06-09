@@ -2,7 +2,6 @@ const productResolvers = require("./productResolver");
 const categoryResolvers = require("./categoryResolver");
 const orderResolvers = require("./orderResolver");
 
-// Merge all resolvers
 const resolvers = {
   Query: {
     ...productResolvers.Query,
