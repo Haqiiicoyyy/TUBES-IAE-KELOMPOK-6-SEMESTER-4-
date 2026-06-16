@@ -58,5 +58,44 @@
   <div id="toastContainer" class="toast-container"></div>
 
   <script src="script.js"></script>
+
+  <section class="admin-section">
+    <h2>⚙️ Seller Center (Manajemen Produk)</h2>
+    
+    <div class="admin-grid">
+      <div class="admin-card">
+        <h3>Tambah Produk Baru (Create)</h3>
+        <form id="formAddProduct" class="admin-form">
+          <input type="text" id="addName" placeholder="Nama Produk" required>
+          <input type="number" id="addPrice" placeholder="Harga (Rp)" required min="0">
+          <input type="number" id="addStock" placeholder="Stok" required min="0">
+          <select id="addCategory" required>
+            <option value="">Pilih Kategori...</option>
+            </select>
+          <button type="submit" class="btn-success"><i class="fa fa-plus"></i> Simpan Produk</button>
+        </form>
+      </div>
+
+      <div class="admin-card">
+        <h3>Daftar Produk</h3>
+        <div style="overflow-x: auto;">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nama</th>
+                <th>Harga</th>
+                <th>Stok</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="adminProductTable">
+              </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+  
 </body>
 </html>
