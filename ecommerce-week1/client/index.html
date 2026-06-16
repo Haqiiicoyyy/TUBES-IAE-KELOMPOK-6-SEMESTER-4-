@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Marketplace Modern</title>
+
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <div class="nav-content">
+      <div class="logo">
+        <i class="fa-solid fa-store"></i> <span>TokoGraphQL</span>
+      </div>
+
+      <div class="search-bar">
+        <input type="text" placeholder="Cari produk...">
+        <button><i class="fa fa-search"></i></button>
+      </div>
+
+      <div class="nav-icons">
+        <i class="fa-solid fa-bell"></i>
+        <i class="fa-solid fa-cart-shopping"></i>
+      </div>
+    </div>
+  </nav>
+
+  <!-- BANNER -->
+  <section class="banner">
+    <img src="https://via.placeholder.com/1200x300?text=Promo+Marketplace">
+  </section>
+
+  <!-- KATEGORI -->
+  <section class="category-list">
+    <div class="category">Elektronik</div>
+    <div class="category">Fashion</div>
+    <div class="category">Makanan</div>
+  </section>
+
+  <!-- PRODUK -->
+  <main class="main-container">
+    <h2>Rekomendasi Produk</h2>
+    <div class="product-grid" id="productGrid"></div>
+  </main>
+
+  <!-- TRACKING (DI BAWAH, BUKAN SIDEBAR) -->
+  <section class="tracking-section">
+    <h2>📦 Live Tracking <span class="pulse"></span></h2>
+    <div id="trackingList"></div>
+  </section>
+
+  <!-- TOAST -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
