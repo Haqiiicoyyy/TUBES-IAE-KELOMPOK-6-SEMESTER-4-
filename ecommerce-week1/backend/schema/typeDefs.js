@@ -43,6 +43,7 @@ const typeDefs = gql`
   type Order {
     id: ID!
     customerName: String!
+    shippingAddress: String!
     totalPrice: Float!
     status: String!
     items: [OrderItem]
@@ -63,6 +64,7 @@ const typeDefs = gql`
 
   input CreateOrderInput {
     customerName: String!
+    shippingAddress: String!
     items: [OrderItemInput!]!
   }
 

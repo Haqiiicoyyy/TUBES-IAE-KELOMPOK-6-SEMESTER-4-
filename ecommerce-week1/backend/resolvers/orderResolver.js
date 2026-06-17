@@ -21,10 +21,15 @@ const orderResolver = {
       const conn = await db.getConnection();
 
       try {
-        const { customerName, items } = input;
+        // 1. TANGKAP shippingAddress DARI FRONTEND
+        const { customerName, shippingAddress, items } = input;
 
         if (!customerName || customerName.trim() === "") {
           throw new Error("Nama pelanggan tidak boleh kosong");
+        }
+        // 2. VALIDASI ALAMAT
+        if (!shippingAddress || shippingAddress.trim() === "") {
+          throw new Error("Alamat pengiriman tidak boleh kosong");
         }
         if (!items || items.length === 0) {
           throw new Error("Order harus memiliki minimal 1 item");
@@ -65,9 +70,10 @@ const orderResolver = {
           );
         }
 
+        // 3. MASUKKAN shippingAddress KE DATABASE
         const [orderResult] = await conn.query(
-          "INSERT INTO orders (customer_name, total_price, status) VALUES (?, ?, 'PENDING')",
-          [customerName.trim(), totalPrice]
+          "INSERT INTO orders (customer_name, shipping_address, total_price, status) VALUES (?, ?, ?, 'PENDING')",
+          [customerName.trim(), shippingAddress.trim(), totalPrice]
         );
         const orderId = orderResult.insertId;
 
@@ -110,8 +116,9 @@ const orderResolver = {
   },
 
   Order: {
-    // Mapping snake_case kolom DB → camelCase field GraphQL
     customerName: (order) => order.customer_name,
+    // 4. MAPPING ALAMAT KE GRAPHQL
+    shippingAddress: (order) => order.shipping_address,
     totalPrice:   (order) => order.total_price,
     createdAt:    (order) => order.created_at?.toISOString?.() || order.created_at,
 

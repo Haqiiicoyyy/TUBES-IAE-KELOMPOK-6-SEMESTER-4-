@@ -7,10 +7,13 @@ const locationMap = {
   "PENDING": "Gudang Penjual",
   "PROCESSING": "Pusat Sortir",
   "SHIPPED": "Dalam Perjalanan",
-  "DELIVERED": "Telah Sampai"
+  "DELIVERED": "Telah Sampai",
+  "CANCELLED": "Dibatalkan"
 };
 
-// --- UTILITY FETCH ---
+// =========================================
+// UTILITY FETCH GRAPHQL
+// =========================================
 async function fetchGraphQL(query, variables = {}) {
   try {
     const res = await fetch(API_URL, {
@@ -30,7 +33,9 @@ async function fetchGraphQL(query, variables = {}) {
   }
 }
 
-// --- TOAST NOTIFICATION ---
+// =========================================
+// TOAST NOTIFICATION (POP-UP)
+// =========================================
 function showToast(id, status, area) {
   try { audio.play(); } catch(e) {} // Abaikan error jika autoplay diblokir browser
   
@@ -45,7 +50,9 @@ function showToast(id, status, area) {
   setTimeout(() => toast.remove(), 4000);
 }
 
-// --- 1. LOAD KATEGORI UNTUK FORM (SELLER CENTER) ---
+// =========================================
+// 1. LOAD KATEGORI UNTUK FORM (READ)
+// =========================================
 async function loadCategoriesForForm() {
   const select = document.getElementById('addCategory');
   if (!select) return;
@@ -65,7 +72,9 @@ async function loadCategoriesForForm() {
   }
 }
 
-// --- 2. LOAD PRODUK UNTUK PEMBELI ---
+// =========================================
+// 2. LOAD PRODUK UNTUK PEMBELI (READ)
+// =========================================
 async function loadProducts() {
   const grid = document.getElementById('productGrid');
   if (!grid) return;
@@ -95,11 +104,13 @@ async function loadProducts() {
       grid.innerHTML = '<p>Belum ada produk yang dijual.</p>';
     }
   } catch (error) {
-    grid.innerHTML = `<p style="color:red;">Gagal memuat produk: ${error.message}</p>`;
+    grid.innerHTML = `<p style="color:red;">Gagal memuat produk</p>`;
   }
 }
 
-// --- 3. LOAD DATA UNTUK TABEL ADMIN ---
+// =========================================
+// 3. LOAD DATA UNTUK TABEL ADMIN (READ)
+// =========================================
 async function loadAdminTable() {
   const tbody = document.getElementById('adminProductTable');
   if (!tbody) return;
@@ -130,37 +141,32 @@ async function loadAdminTable() {
   }
 }
 
-// --- 4. PEMBELIAN (BUY) ---
-async function buy(id){
-  const name = prompt("Masukkan Nama Penerima:");
-  if(!name || name.trim() === "") return;
-
-  const mutation = `
-    mutation($input: CreateOrderInput!){
-      createOrder(input: $input) { id status }
-    }
-  `;
-
-  try {
-    await fetchGraphQL(mutation, {
-      input: { customerName: name, items: [{ productId: id, quantity: 1 }] }
-    });
-    alert("Pesanan berhasil dibuat!");
-    loadProducts(); // Refresh stok di tampilan pembeli
-    loadAdminTable(); // Refresh stok di tampilan admin
-    loadOrders(); // Refresh status tracking
-  } catch (error) {
-    alert("Gagal membuat pesanan: " + error.message);
-  }
+// =========================================
+// 4. PEMBELIAN (BUKA UI MODAL)
+// =========================================
+function buy(id) {
+  // Masukkan ID produk ke dalam form tersembunyi
+  document.getElementById('checkoutProductId').value = id;
+  // Tampilkan Modal
+  document.getElementById('checkoutModal').classList.add('active');
 }
 
-// --- 5. LIVE TRACKING (REAL-TIME) ---
+// Fungsi untuk menutup Modal (TIDAK BOLEH di dalam function buy)
+function closeCheckoutModal() {
+  document.getElementById('checkoutModal').classList.remove('active');
+  document.getElementById('checkoutForm').reset();
+}
+
+// =========================================
+// 5. LIVE TRACKING (READ REAL-TIME)
+// =========================================
 async function loadOrders(){
   const trackingList = document.getElementById('trackingList');
   if (!trackingList) return;
 
   try {
-    const query = `query { orders { id status customerName } }`;
+    // Tambahkan shippingAddress pada Query
+    const query = `query { orders { id status customerName shippingAddress } }`;
     const res = await fetchGraphQL(query);
 
     let html = '';
@@ -170,7 +176,6 @@ async function loadOrders(){
       res.data.orders.forEach(o => {
         const area = locationMap[o.status] || "Dibatalkan";
         
-        // Cek apakah ada perubahan status (untuk memunculkan Toast)
         if(previousOrdersState[o.id] && previousOrdersState[o.id] !== o.status){
           showToast(o.id, o.status, area);
         }
@@ -180,13 +185,30 @@ async function loadOrders(){
 
         html += `
           <div style="background: white; padding: 15px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #ddd;">
-            <div style="font-weight: bold; margin-bottom: 10px;">📦 Order #${o.id} - ${o.customerName}</div>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+              <div style="font-weight: bold;">📦 Order #${o.id} - ${o.customerName}</div>
+              
+              <select onchange="updateOrderStatus('${o.id}', this.value)" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc; font-size: 12px; background: #f8f9fa; cursor: pointer;">
+                <option value="PENDING" ${o.status === 'PENDING' ? 'selected' : ''}>Status: PENDING</option>
+                <option value="PROCESSING" ${o.status === 'PROCESSING' ? 'selected' : ''}>Status: PROCESSING</option>
+                <option value="SHIPPED" ${o.status === 'SHIPPED' ? 'selected' : ''}>Status: SHIPPED</option>
+                <option value="DELIVERED" ${o.status === 'DELIVERED' ? 'selected' : ''}>Status: DELIVERED</option>
+                <option value="CANCELLED" ${o.status === 'CANCELLED' ? 'selected' : ''}>Status: CANCELLED</option>
+              </select>
+            </div>
+            
+            <div style="font-size: 12px; color: #555; margin-bottom: 15px;">
+              <i class="fa fa-home"></i> Alamat: ${o.shippingAddress}
+            </div>
+
             <div class="timeline" style="display:flex; justify-content:space-between; margin-bottom:10px;">
               <div class="step ${currentIndex >= 0 ? 'active' : ''}">Pesan</div>
               <div class="step ${currentIndex >= 1 ? 'active' : ''}">Proses</div>
               <div class="step ${currentIndex >= 2 ? 'active' : ''}">Kirim</div>
               <div class="step ${currentIndex >= 3 ? 'active' : ''}">Sampai</div>
             </div>
+            
             <div style="font-size:12px; color:gray;"><i class="fa fa-map-marker-alt"></i> Posisi Saat Ini: ${area}</div>
           </div>
         `;
@@ -201,7 +223,26 @@ async function loadOrders(){
   }
 }
 
-// --- 7. ADMIN UPDATE PRODUCT (Biarkan di luar agar bisa dipanggil tombol HTML) ---
+// =========================================
+// 6. UPDATE ORDER STATUS (UPDATE MUTATION)
+// =========================================
+async function updateOrderStatus(id, newStatus) {
+  const mutation = `
+    mutation($id: ID!, $status: String!) {
+      updateOrderStatus(id: $id, status: $status) { id status }
+    }
+  `;
+  try {
+    await fetchGraphQL(mutation, { id: id, status: newStatus });
+    loadOrders(); // Memaksa UI langsung memuat ulang
+  } catch (error) {
+    alert("Gagal mengubah status pesanan: " + error.message);
+  }
+}
+
+// =========================================
+// 7. ADMIN UPDATE PRODUCT (UPDATE MUTATION)
+// =========================================
 async function editProduct(id) {
   const newStock = prompt("Masukkan jumlah stok terbaru:");
   if (newStock === null || newStock === "") return;
@@ -224,7 +265,9 @@ async function editProduct(id) {
   }
 }
 
-// --- 8. ADMIN DELETE PRODUCT (Biarkan di luar agar bisa dipanggil tombol HTML) ---
+// =========================================
+// 8. ADMIN DELETE PRODUCT (DELETE MUTATION)
+// =========================================
 async function deleteProduct(id) {
   if (!confirm("Yakin ingin menghapus produk ini?")) return;
 
@@ -243,21 +286,24 @@ async function deleteProduct(id) {
   }
 }
 
-// --- INISIALISASI AWAL & PENGIKATAN FORM ---
+// =========================================
+// 9. INISIALISASI AWAL & FORM BINDING
+// =========================================
 document.addEventListener('DOMContentLoaded', () => {
+  // Panggil semua data saat halaman selesai dimuat
   loadCategoriesForForm();
   loadProducts();
   loadAdminTable();
   loadOrders();
 
-  // Sinkronisasi Tracking tiap 3 detik
+  // Sinkronisasi Tracking Real-Time tiap 3 detik
   setInterval(loadOrders, 3000);
 
-  // --- 6. ADMIN CREATE PRODUCT (Dipindah ke dalam sini) ---
+  // Binding Form Tambah Produk (CREATE MUTATION)
   const formAddProduct = document.getElementById('formAddProduct');
   if (formAddProduct) {
     formAddProduct.addEventListener('submit', async (e) => {
-      e.preventDefault(); // Mencegah halaman me-refresh sendiri
+      e.preventDefault(); 
       
       const name = document.getElementById('addName').value;
       const price = parseFloat(document.getElementById('addPrice').value);
@@ -280,14 +326,61 @@ document.addEventListener('DOMContentLoaded', () => {
           input: { name, price, stock, categoryId }
         });
         alert("Produk berhasil ditambahkan!");
-        formAddProduct.reset(); // Mengosongkan form
-        loadProducts(); // Merender ulang grid katalog
-        loadAdminTable(); // Merender ulang tabel admin
+        formAddProduct.reset(); 
+        loadProducts(); 
+        loadAdminTable(); 
       } catch (error) {
         alert("Gagal menambah produk: " + error.message);
       }
     });
   }
-  // Sinkronisasi Tracking tiap 3 detik
-  setInterval(loadOrders, 3000);
+
+  // =========================================
+  // BINDING FORM CHECKOUT (UI BARU)
+  // =========================================
+  const checkoutForm = document.getElementById('checkoutForm');
+  if (checkoutForm) {
+    checkoutForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const id = document.getElementById('checkoutProductId').value;
+      const name = document.getElementById('checkoutName').value;
+      const address = document.getElementById('checkoutAddress').value;
+
+      const mutation = `
+        mutation($input: CreateOrderInput!){
+          createOrder(input: $input) { id status }
+        }
+      `;
+
+      try {
+        // Ubah tombol jadi status loading agar terlihat profesional
+        const btnSubmit = checkoutForm.querySelector('.btn-submit-modal');
+        const originalText = btnSubmit.innerHTML;
+        btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';
+        btnSubmit.disabled = true;
+
+        await fetchGraphQL(mutation, {
+          input: { 
+            customerName: name, 
+            shippingAddress: address, 
+            items: [{ productId: id, quantity: 1 }] 
+          }
+        });
+        
+        // Kembalikan tombol seperti semula
+        btnSubmit.innerHTML = originalText;
+        btnSubmit.disabled = false;
+
+        alert("Pesanan berhasil dibuat!");
+        closeCheckoutModal(); // Tutup modal otomatis
+        loadProducts(); 
+        loadAdminTable(); 
+        loadOrders(); 
+      } catch (error) {
+        alert("Gagal membuat pesanan: " + error.message);
+        checkoutForm.querySelector('.btn-submit-modal').disabled = false;
+      }
+    });
+  }
 });
